@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: plpo-service
+  namespace: plpo-production
+  labels:
+    app: plpo
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8501
+      protocol: TCP
+      name: http
+  selector:
+    app: plpo
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: plpo-hpa
+  namespace: plpo-production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: plpo-deployment
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 75
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: plpo-ingress
+  namespace: plpo-production
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: "plpo-service"
+spec:
+  tls:
+    - hosts:
+        - plpo.yourdomain.edu
+      secretName: plpo-tls-cert
+  rules:
+    - host: plpo.yourdomain.edu
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: plpo-service
+                port:
+                  number: 80
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plpo-config
+  namespace: plpo-production
+data:
+  APP_ENV: "production"
+  LOG_LEVEL: "INFO"
+  DB_POOL_SIZE: "15"
+  DB_MAX_OVERFLOW: "30"
+  AI_RATE_LIMIT_PER_MINUTE: "30"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: plpo-secrets
+  namespace: plpo-production
+type: Opaque
+stringData:
+  DATABASE_URL: "postgresql://plpo_admin:REPLACE_WITH_SECURE_PASSWORD@plpo-postgres.internal:5432/plpo_production"
+  REDIS_URL: "redis://plpo-redis.internal:6379/0"
+  GEMINI_API_KEY: "REPLACE_WITH_GEMINI_API_KEY"

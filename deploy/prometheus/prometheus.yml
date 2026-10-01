@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'plpo-app'
+    static_configs:
+      - targets: ['plpo-app:8501']
+    metrics_path: '/metrics'

@@ -1,0 +1,95 @@
+# ==============================================================================
+# Docker Compose: Production Full-Stack Architecture for PLPO
+# ==============================================================================
+# Services:
+# 1. plpo-app: Streamlit Adaptive Learning Web & API Service
+# 2. plpo-db: PostgreSQL 16 with pgvector extension enabled
+# 3. plpo-redis: Redis 7 for distributed caching and sliding-window rate limiting
+# 4. plpo-prometheus: Prometheus metric scraper and monitoring
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  plpo-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: plpo-app
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      - APP_ENV=production
+      - DATABASE_URL=postgresql://plpo_admin:plpo_secure_password_2026@plpo-db:5432/plpo_production
+      - REDIS_URL=redis://plpo-redis:6379/0
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - LOG_LEVEL=INFO
+      - DB_POOL_SIZE=10
+      - DB_MAX_OVERFLOW=20
+    depends_on:
+      plpo-db:
+        condition: service_healthy
+      plpo-redis:
+        condition: service_healthy
+    networks:
+      - plpo-network
+
+  plpo-db:
+    image: pgvector/pgvector:pg16
+    container_name: plpo-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: plpo_production
+      POSTGRES_USER: plpo_admin
+      POSTGRES_PASSWORD: plpo_secure_password_2026
+    ports:
+      - "5432:5432"
+    volumes:
+      - plpo-pgdata:/var/lib/postgresql/data
+      - ./core/db/migrations/init_postgres_pgvector.sql:/docker-entrypoint-initdb.d/init_postgres_pgvector.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plpo_admin -d plpo_production"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - plpo-network
+
+  plpo-redis:
+    image: redis:7-alpine
+    container_name: plpo-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - plpo-redisdata:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - plpo-network
+
+  plpo-prometheus:
+    image: prom/prometheus:latest
+    container_name: plpo-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - plpo-promdata:/prometheus
+    networks:
+      - plpo-network
+
+networks:
+  plpo-network:
+    driver: bridge
+
+volumes:
+  plpo-pgdata:
+  plpo-redisdata:
+  plpo-promdata:

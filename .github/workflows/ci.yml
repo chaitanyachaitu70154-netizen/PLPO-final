@@ -1,0 +1,92 @@
+name: PLPO CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    name: Automated Testing & Code Quality
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: plpo_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Verify Python Compilation
+        run: |
+          python -m py_compile app.py
+          python -m compileall pages/ components/ core/ utils/ data/
+
+      - name: Run Test Suite with Pytest
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/plpo_test
+          REDIS_URL: redis://localhost:6379/0
+          APP_ENV: test
+        run: |
+          python -m pytest tests/ -v --tb=short
+
+  docker-build:
+    name: Docker Image Build & Security Scan
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: actions/setup-buildx-action@v3
+
+      - name: Build Container Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: plpo:latest
+          load: true
+
+      - name: Test Container Startup
+        run: |
+          docker run --rm -d --name test-plpo -p 8501:8501 plpo:latest
+          sleep 10
+          docker logs test-plpo
+          docker stop test-plpo
